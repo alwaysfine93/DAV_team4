@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>4조 백엔드 연결 확인</title>
+<style>body{font:16px/1.6 system-ui,sans-serif;color:#18212f;background:#f5f7fa;max-width:760px;margin:40px auto;padding:20px}main{background:white;border:1px solid #dbe1e8;padding:28px;border-radius:16px}h1{font-size:25px}input,button{font:inherit;padding:12px;border-radius:8px;border:1px solid #b8c4d0}input{display:block;width:calc(100% - 26px);margin:10px 0 20px}button{background:#244f91;color:white;cursor:pointer;margin:5px 8px 5px 0}button:disabled{opacity:.5;cursor:wait}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f1f4f8;padding:16px;border-radius:8px;min-height:60px}.muted{color:#526071;font-size:14px}</style>
+<main><h1>4조 백엔드 연결 확인</h1><p>원래 앱의 화면을 바꾸지 않고 서버 연결과 저장 기능을 확인합니다.</p>
+<label for="code">가족 공유코드</label><input id="code" type="password" autocomplete="off" placeholder="시트에서 만든 32자리 공유코드">
+<button id="health">서버 연결 확인</button><button id="list">가족 조회 확인</button><button id="test">저장·수정·삭제 테스트</button>
+<p class="muted">마지막 버튼은 해당 가족에 테스트 일정 1개를 추가하고 조회·수정·삭제를 확인합니다. 삭제 기록은 시트에 남습니다. 공유코드는 이 페이지를 벗어나면 보관하지 않습니다.</p>
+<pre id="out" role="status" aria-live="polite">먼저 서버 연결 확인을 눌러 주세요.</pre></main>
+<script>
+const out=document.querySelector('#out');
+const buttons=[...document.querySelectorAll('button')];
+let activeCode='';
+const log=s=>{out.textContent+=s+'\n';};
+async function request(body){const r=await fetch('/api/schedules',body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,familyCode:activeCode})}:{cache:'no-store'});let data;try{data=await r.json();}catch{throw new Error('JSON 응답이 아닙니다. 같은 Vercel 프로젝트에 API 파일을 올렸는지 확인하세요.');}if(!r.ok||!data.ok)throw new Error(`${data.code||r.status}: ${data.message||'요청 실패'}`);return data;}
+async function run(fn,needsCode){buttons.forEach(b=>b.disabled=true);out.textContent='';try{activeCode=document.querySelector('#code').value.trim();if(needsCode&&!activeCode)throw new Error('가족 공유코드를 입력하세요.');await fn();}catch(e){log('확인 필요: '+e.message);}finally{activeCode='';buttons.forEach(b=>b.disabled=false);}}
+document.querySelector('#health').onclick=()=>run(async()=>{const d=await request();if(!d.connected)throw new Error('시트 연결이 확인되지 않았습니다.');log('✓ Vercel → Apps Script → 시트 연결 성공');},false);
+document.querySelector('#list').onclick=()=>run(async()=>{const d=await request({action:'list'});log(`✓ ${d.family.name} 조회 성공\n구성원: ${d.family.members.join(', ')}\n저장된 일정: ${d.events.length}개`);},true);
+document.querySelector('#test').onclick=()=>run(async()=>{
+ const initial=await request({action:'list'}); const id=crypto.randomUUID();
+ const date=new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+ const event={name:initial.family.members[0],date,start:'09:10',end:'09:20',desc:'[연결 테스트] '+id.slice(0,8),category:'기타',emoji:'📝'};
+ let version;let attempted=false;let deleted=false;
+ try{
+  attempted=true;const created=await request({action:'create',id,event});version=created.event.version;log('✓ 테스트 일정 추가');
+  const loaded=await request({action:'list',from:date,to:date});if(!loaded.events.some(e=>e.id===id))throw new Error('추가한 일정이 조회되지 않습니다.');log('✓ 시트에서 다시 조회');
+  const changed=await request({action:'update',id,version,event:{...event,end:'09:30',desc:event.desc+' 수정'}});version=changed.event.version;
+  const checked=await request({action:'list',from:date,to:date});if(!checked.events.some(e=>e.id===id&&e.end==='09:30'))throw new Error('수정 결과가 반영되지 않았습니다.');log('✓ 일정 수정과 재조회');
+  await request({action:'delete',id,version});deleted=true;
+  const final=await request({action:'list',from:date,to:date});if(final.events.some(e=>e.id===id))throw new Error('삭제한 일정이 목록에 남았습니다.');log('✓ 삭제 후 목록에서 제외\n백엔드 저장·조회·수정·삭제 확인 완료');
+ }finally{
+  if(attempted&&!deleted){try{const d=await request({action:'list',from:date,to:date});const left=d.events.find(e=>e.id===id);if(left){await request({action:'delete',id,version:left.version});log('테스트 중 생성한 일정은 정리했습니다.');}}catch{log('테스트 일정 정리 여부를 확인하세요. 일정 ID: '+id);}}
+ }
+},true);
+</script></html>
