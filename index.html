@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8"/>
+  <title>가족 일정 캘린더</title>
+  <meta name="viewport" content="width=400, user-scalable=no">
+  <style>
+    /* reset & 폰트 */
+    html, body { margin:0; padding:0; font-family:'Pretendard', 'Noto Sans KR', Arial,sans-serif; background:#fafdff; }
+    body { min-height:100vh; background:#fafdff; }
+    #app { max-width:430px; margin:0 auto; padding:0 0 48px 0; }
+    .header { text-align:center; margin:20px 0 8px 0; font-size:1.6em; font-weight:bold;}
+    .themePicker { margin:4px 0 0 0; display:flex; justify-content:center; gap:8px; }
+    .themeCircle { width:24px; height:24px; border-radius:16px; border:2px solid #d5dee7; cursor:pointer;}
+    .theme-active { border:2.5px solid #353a65 !important; }
+    .menuBar { display:flex; justify-content:space-around; position:fixed; left:0; right:0; bottom:0; background:white; box-shadow:0 -1px 8px #def1; padding:10px 0 5px 0; z-index:10;}
+    .menuBtn { background:none; border:none; color:#7d90b5; font-size:1.2em; font-weight:bold; padding:8px 14px; border-radius:8px; cursor:pointer;}
+    .menuBtn.active, .menuBtn:hover { color:#fff; background:#4970e1;}
+    .screen { display:none; margin:0 10px 0 10px;}
+    .screen.active { display:block;}
+    /* 공통 */
+    .panel, .box, .shadow { border-radius:12px; background:#fff; box-shadow:0 0 8px #daebff21;}
+    .box {padding:18px 18px;}
+    label { font-size:1.07em; font-weight:500;}
+    input, select, textarea { font-size:1em; border:1px solid #bbc5de; border-radius:8px; margin-top:3px; padding:6px 8px; background:#fafdff;}
+    input[type='checkbox'] { margin-right:3px;}
+    button { font-family:inherit;}
+    .btn-main { font-weight:bold; background:var(--main); color:#fff; border-radius:8px; border:none; padding:9px 0; margin:6px 0;}
+    .btn-main:active { background:var(--main-dk);}
+    .btn-sub { background:#dce9fa; color:#4d5c8a; font-weight:bold; border:none; padding:7px 16px; border-radius:7px;}
+    /* 캘린더 */
+    .calendar-head {display:flex; justify-content:space-between; align-items:center; margin-bottom:7px;}
+    .calendar-title {font-size:1.24em; font-weight:600;}
+    .calendar-select {border:none; font-weight:bold; background:transparent;}
+    .calendar-table {width:100%; border-collapse:collapse;}
+    .calendar-table th, .calendar-table td { text-align:center; padding:5px 1px; }
+    .calendar-table th { color:var(--main); font-weight:bold;}
+    .calendar-table td { font-size:.97em; height:32px; position:relative;}
+    .calendar-today {background:var(--main-fade); border-radius:7px;}
+    .calendar-event-dot { position:absolute; left:50%; top:85%; transform:translate(-50%,-40%); width:7px; height:7px; border-radius:50%; background:var(--main); }
+    .mini-list { margin:0; padding:0 0 0 8px; font-size:0.95em;}
+    .mini-list li { margin:2px 0; padding:0;}
+    /* 일정 입력 */
+    .event-emoji {font-size:2em;}
+    /* 필터 & 빈시간 */
+    .filterList {display:flex; flex-wrap:wrap; margin-bottom:8px; gap:10px;}
+    .catBtn {background:#ebf1fc; border:none; color:#4970e1; font-weight:600; padding: 7px 16px; border-radius:20px; font-size:1em; margin:0 3px 3px 0; cursor:pointer;}
+    .catBtn.sel {background:var(--main);}
+    .catCheckbox { margin-bottom:7px; margin-right:10px;}
+    /* 통계 및 기타 */
+    .badge { display:inline-block; background:#fef5b8; color:#997732; font-weight:700; font-size:.89em; border-radius:7px; padding:2.5px 7px; margin-bottom:3px; }
+    /* 테마별 변수 */
+    :root {
+      --main: #4970e1; --main-dk:#384289; --main-fade:#eaf0ff;
+      --bg2: #fdffe7; --accent:#ffb767;
+    }
+    .theme-yellow { --main:#ffab33; --main-dk:#a78f1c; --main-fade:#fffad9; --bg2:#fffbe7; --accent:#498dee;}
+    .theme-pink  { --main:#fb5194; --main-dk:#943b75; --main-fade:#fff2fa; --bg2:#fff0f8; --accent:#5787f5;}
+    .theme-green { --main:#55b966; --main-dk:#227c4a; --main-fade:#eaffed; --bg2:#f9fff8; --accent:#d37742;}
+    .emoji-picker { font-size:1.4em; margin-top:9px;}
+    .emoji-choice { cursor:pointer; margin:0 4px;}
+    /* 귀여운 일러 넣기 */
+    .illu { text-align:center; margin:10px 0 0 0;}
+    .illu img { height:66px; }
+    /* 반응형 */
+    @media (max-width:500px) {
+      #app {max-width:100vw;}
+      .box {padding:7vw 2vw;}
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="header">가족 일정 캘린더</div>
+    <div class="themePicker" id="themePicker">
+      <div class="themeCircle theme-default theme-active" style="background:#4970e1" data-t="default" title="블루"></div>
+      <div class="themeCircle theme-yellow" style="background:#ffab33" data-t="yellow" title="옐로우"></div>
+      <div class="themeCircle theme-pink" style="background:#fb5194" data-t="pink" title="핑크"></div>
+      <div class="themeCircle theme-green" style="background:#55b966" data-t="green" title="그린"></div>
+    </div>
+    <div class="illu"><img src="https://cdn.pixabay.com/photo/2013/07/13/12/35/family-146770_1280.png" alt="귀여운 가족" draggable="false" /></div>
+
+    <!-- 메뉴 -->
+    <div class="menuBar" id="menuBar">
+      <button class="menuBtn active" data-screen="calendar">캘린더</button>
+      <button class="menuBtn" data-screen="event">일정 입력</button>
+      <button class="menuBtn" data-screen="filter">필터</button>
+      <button class="menuBtn" data-screen="free">빈 시간</button>
+      <button class="menuBtn" data-screen="stats">통계</button>
+    </div>
+
+    <!-- 캘린더 화면 -->
+    <div class="screen active" id="calendarScreen">
+      <div class="calendar-head">
+        <button class="btn-sub" id="prevMonthBtn">&lt;</button>
+        <select id="calendarYearMon" class="calendar-select"></select>
+        <button class="btn-sub" id="nextMonthBtn">&gt;</button>
+      </div>
+      <div id="calendarWrap"></div>
+      <div id="calendarEventList" class="box" style="margin-top:16px;"></div>
+    </div>
+
+    <!-- 일정 입력 화면 -->
+    <div class="screen" id="eventScreen">
+      <form id="eventForm" class="box" autocomplete="off">
+        <label>약속 종류(카테고리)</label><br>
+        <div class="filterList" id="catSelectList"></div>
+        <input type="hidden" name="category" id="eventCategory"/>
+        <label>이모지 선택 (옵션)</label>
+        <div class="emoji-picker" id="emojiPicker"></div>
+        <input type="hidden" name="emoji" id="eventEmoji"/>
+        <label>이름</label><br>
+        <select name="name" id="eventName" required style="margin-bottom:10px;">
+          <option value="">선택</option>
+          <option>엄마</option>
+          <option>아빠</option>
+          <option>나</option>
+          <option>동생</option>
+        </select><br>
+        <label>약속 날짜</label>
+        <input type="date" name="date" id="eventDate" required><br>
+        <label>시작 시간</label>
+        <input type="time" name="start" id="eventStart" required value="10:00"/><br>
+        <label>끝 시간</label>
+        <input type="time" name="end" id="eventEnd" required value="11:00"/><br>
+        <label>일정 내용</label>
+        <input type="text" name="desc" id="eventDesc" required maxlength="30"/><br>
+        <button type="submit" class="btn-main" style="width:100%;">일정 추가</button>
+      </form>
+      <div id="eventCatListResult" class="box" style="display:none;margin-top:12px;"></div>
+    </div>
+
+    <!-- 필터 화면 -->
+    <div class="screen" id="filterScreen">
+      <div class="box">
+        <label>보고 싶은 가족을 선택하세요</label>
+        <div id="filterNameList" class="filterList" style="margin-bottom:10px;"></div>
+        <button id="filterConfirmBtn" class="btn-main" style="width:100%;">필터 확정</button>
+      </div>
+      <div id="filterResult" class="box" style="margin-top:10px;height:220px;overflow:auto;"></div>
+    </div>
+
+    <!-- 빈 시간 화면 -->
+    <div class="screen" id="freeScreen">
+      <div class="box">
+        <label>빈 시간을 확인할 날짜</label>
+        <input type="date" id="freeDate" style="margin-bottom:7px;">
+        <button id="freeConfirmBtn" class="btn-main" style="width:100%;">빈 시간 확정</button>
+      </div>
+      <div id="freeResult" class="box" style="margin-top:10px;min-height:120px;"></div>
+    </div>
+
+    <!-- 통계/카테고리 화면 -->
+    <div class="screen" id="statsScreen">
+      <div class="box">
+        <label>카테고리별 약속 보기</label><br>
+        <div class="filterList" id="catListStats"></div>
+        <div id="statsResult" style="margin-top:14px;"></div>
+      </div>
+    </div>
+
+  </div>
+  <script>
+    // ===== 데이터 구조 및 초기값 =====
+    // 가족 목록/카테고리/이모지 추천
+    const FAMILY = ["엄마","아빠","나","동생"];
+    const CATEGORY = ["가족","개인","공부","외출","운동","식사","친구","기타"];
+    const EMOJI = ["👨‍👩‍👧‍👦","🏠","📝","📚","👟","🍽️","🚗","🍀","🎮","🥗","🧸"];
+
+    // 일정 데이터: [{name, date, start, end, desc, category, emoji}]
+    // - localStorage key: 'famSched'
+    let schedules = []; // 실제 데이터
+    let theme = 'default';
+    // ---- localStorage load ----
+    function loadData(){
+      try {
+        const saved = localStorage.getItem('famSched');
+        if(saved) schedules = JSON.parse(saved);
+        const t = localStorage.getItem('famTheme'); 
+        if (t && typeof t === 'string') theme = t;
+      } catch(e){ alert('저장소 접근 오류, 데이터가 저장되지 않을 수 있습니다.'); schedules=[];}
+    }
+    function saveData(){
+      try {
+        localStorage.setItem('famSched', JSON.stringify(schedules));
+      } catch { alert('저장소 저장 실패, 임시로만 사용됩니다.'); }
+    }
+    function saveTheme(){
+      try{ localStorage.setItem('famTheme', theme);}catch{}
+    }
+    loadData();
+
+    // ===== 테마 =====
+    function setTheme(t){
+      document.body.classList.remove('theme-yellow','theme-pink','theme-green');
+      if(t==='yellow') document.body.classList.add('theme-yellow');
+      if(t==='pink') document.body.classList.add('theme-pink');
+      if(t==='green') document.body.classList.add('theme-green');
+      theme = t; saveTheme();
+      document.querySelectorAll('.themeCircle').forEach(el=>el.classList.remove('theme-active'));
+      document.querySelector('.themeCircle[data-t="'+t+'"]').classList.add('theme-active');
+    }
+    // 테마 적용 on click
+    document.querySelectorAll('.themeCircle').forEach(el=>{
+      el.onclick = ()=> setTheme(el.getAttribute('data-t')) 
+    });
+    setTheme(theme);
+
+    // ===== 화면 전환 =====
+    function showScreen(sid){
+      document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+      document.getElementById(sid+'Screen').classList.add('active');
+      document.querySelectorAll('.menuBtn').forEach(b=>b.classList.remove('active'));
+      document.querySelector('.menuBtn[data-screen="'+sid+'"]').classList.add('active');
+      if(sid==='calendar') makeCalendar();
+      if(sid==='event') showCatSelect();
+      if(sid==='filter') updateFilterNameList();
+      if(sid==='stats') showStats();
+      if(sid==='free') showFreeDefault();
+    }
+    document.querySelectorAll('.menuBtn').forEach(btn=>{
+      btn.onclick = ()=> showScreen(btn.getAttribute('data-screen'));
+    });
+
+    // ===== 캘린더 화면 =====
+    function unique(arr){ return [...new Set(arr)]; }
+    function dateToStr(y,m,d){
+      return y+"-"+String(m).padStart(2,'0')+"-"+String(d).padStart(2,'0');
+    }
+    function parseDateStr(s){ 
+      const [y,m,d] = s.split('-'); 
+      return {year:+y,month:+m,day:+d}; 
+    }
+    // 월별 days 가져오기
+    function daysInMonth(y,m){
+      return new Date(y,m,0).getDate();
+    }
+    // 달력에 일정이 있는 날짜
+    function hasEvent(year,mon,day){
+      const dstr = dateToStr(year,mon,day);
+      return schedules.some(e=>e.date===dstr);
+    }
+    // 오늘 날짜
+    const today = new Date();
+    let calY = today.getFullYear(), calM = today.getMonth()+1, selDay = today.getDate();
+    function makeCalendar(initPicker){
+      // 연월 선택자 만들기
+      const yearOpts = [];
+      const curr = today.getFullYear();
+      for(let y=curr-2;y<=curr+1;y++){
+        for(let m=1;m<=12;m++){
+          yearOpts.push(`<option value="${y}-${m}"${y===calY&&m===calM?' selected':''}>${y}년 ${m}월</option>`);
+        }
+      }
+      document.getElementById('calendarYearMon').innerHTML=yearOpts.join('');
+      // 달력 표
+      const nDays = daysInMonth(calY,calM);
+      const firstDay = new Date(calY,calM-1,1).getDay();
+      let h='<table class="calendar-table"><tr>';
+      ["일","월","화","수","목","금","토"].forEach(d=>h+='<th>'+d+'</th>');   
+      h+='</tr><tr>';
+      for(let i=0;i<firstDay;i++) h+='<td></td>';
+      for(let d=1;d<=nDays;d++){
+        let tdcls = '';
+        if(new Date(calY,calM-1,d).toDateString() === today.toDateString()) tdcls = 'calendar-today';
+        h+=`<td class="${tdcls}" data-d="${d}">${d}`;
+        if(hasEvent(calY,calM,d)) h+=`<span class="calendar-event-dot"></span>`;
+        h+=`</td>`;
+        if((firstDay+d)%7===0) h+='</tr><tr>';
+      }
+      h+='</tr></table>';
+      document.getElementById('calendarWrap').innerHTML = h;
+      // 클릭시 해당 날짜로
+      document.querySelectorAll('#calendarWrap td').forEach(td=>{
+        if(td.innerText && td.getAttribute('data-d')) td.onclick = ()=>{
+          selDay = Number(td.getAttribute('data-d'));
+          showDayEvents();
+        }
+      });
+      showDayEvents();
+    }
+    function showDayEvents(){
+      const dstr = dateToStr(calY,calM,selDay);
+      const evts = schedules.filter(e=>e.date===dstr).sort((a,b)=>a.start.localeCompare(b.start));
+      let h = `<b> ${calY}년 ${calM}월 ${selDay}일 일정 </b><ul class="mini-list">`;
+      if(evts.length===0) h += "<li>일정이 없습니다.</li>";
+      evts.forEach(e=>{
+        h+=`<li><span class="event-emoji">${e.emoji?e.emoji:''}</span> <b>[${e.name}]</b> <span class="badge">${e.category}</span> ${e.start}~${e.end} ${escapeHtml(e.desc)||''}</li>`;
+      });
+      h+='</ul>';
+      document.getElementById('calendarEventList').innerHTML=h;
+    }
+    // 월 변경 핸들
+    document.getElementById('calendarYearMon').onchange = function(){
+      const [y,m] = this.value.split('-'); calY=+y; calM=+m; selDay=1; makeCalendar();
+    }
+    document.getElementById('prevMonthBtn').onclick = ()=>{
+      calM--; if(calM<1){calM=12;calY--;} selDay=1; makeCalendar();
+    }
+    document.getElementById('nextMonthBtn').onclick = ()=>{
+      calM++; if(calM>12){calM=1;calY++;} selDay=1; makeCalendar();
+    }
+    // ==== 일정 입력/카테고리 ====
+    function showCatSelect(){
+      // 카테고리 버튼
+      let h='';
+      CATEGORY.forEach(c=>{
+        h+=`<button type="button" class="catBtn" data-cat="${c}">${c}</button>`;
+      });
+      document.getElementById('catSelectList').innerHTML = h;
+      document.querySelectorAll('.catBtn').forEach(btn=>{
+        btn.onclick = function(){
+          document.querySelectorAll('.catBtn').forEach(b=>b.classList.remove('sel'));
+          btn.classList.add('sel');
+          document.getElementById('eventCategory').value = btn.getAttribute('data-cat');
+        }
+      });
+      // 이모지
+      let eh = '';
+      EMOJI.forEach(em=>{
+        eh += `<span class="emoji-choice" data-emo="${em}">${em}</span>`;
+      });
+      document.getElementById('emojiPicker').innerHTML = eh;
+      document.querySelectorAll('.emoji-choice').forEach(sp=>{
+        sp.onclick = ()=> {
+          document.getElementById('eventEmoji').value = sp.getAttribute('data-emo');
+          document.querySelectorAll('.emoji-choice').forEach(e=>e.style.outline='none');
+          sp.style.outline='2px solid #4970e1';
+        }
+      });
+      // reset form
+      document.getElementById('eventForm').reset();
+      document.querySelectorAll('.catBtn').forEach(b=>b.classList.remove('sel'));
+      document.querySelectorAll('.emoji-choice').forEach(e=>e.style.outline='none');
+    }
+    // 일정 추가(파이썬과 동일 규칙)
+    function timeToNum(t){ // "10:30" -> 10.5
+      const [h,m]=t.split(':').map(Number); return h+(m||0)/60;
+    }
+    function timeOrderValid(s,e){ return timeToNum(s)<timeToNum(e); }
+    document.getElementById('eventForm').onsubmit = function(e){
+      e.preventDefault();
+      const cat = document.getElementById('eventCategory').value;
+      const emoj = document.getElementById('eventEmoji').value;
+      const name = document.getElementById('eventName').value;
+      const date = document.getElementById('eventDate').value;
+      const start = document.getElementById('eventStart').value;
+      const end = document.getElementById('eventEnd').value;
+      const desc = document.getElementById('eventDesc').value;
+      if(!cat){ alert('카테고리를 선택하세요'); return; }
+      if(!name||!date||!start||!end||!desc) { alert('모든 항목을 입력하세요'); return;}
+      if(!timeOrderValid(start,end)){ alert('시작시간 < 끝시간이 되도록 입력');return;}
+      // 저장
+      schedules.push({category:cat, emoji:emoj, name, date, start, end, desc});
+      saveData();
+      alert('일정이 추가되었습니다!');
+      showScreen('calendar');
+      makeCalendar();
+    };
+
+    // ===== 필터 기능 =====
+    function updateFilterNameList(){
+      // 체크박스
+      let h='';
+      FAMILY.forEach(n=>{
+        h+=`<label class="catCheckbox"><input type="checkbox" value="${n}" class="filterBox">${n}</label>`;
+      });
+      document.getElementById('filterNameList').innerHTML = h;
+      document.getElementById('filterResult').innerHTML = '';
+    }
+    document.getElementById('filterConfirmBtn').onclick = function(){
+      // 파이썬과 동일: 체크된 가족만 필터링
+      const sel = [];
+      document.querySelectorAll('.filterBox').forEach(cb=>{
+        if(cb.checked) sel.push(cb.value);
+      });
+      const hourList = [];
+      for(let h=8;h<=21;h++){ hourList.push((h<10?'0':'')+h+":00"); }
+      // 시간별로 이벤트 표시
+      let timetable = {};
+      hourList.forEach(h=>timetable[h]=[]);
+      schedules.forEach(ev=>{
+        if(sel.includes(ev.name)){
+          const sh = Number(ev.start.split(":")[0]);
+          const eh = Number(ev.end.split(":")[0]);
+          for(let h=sh;h<eh;h++){
+            const key = (h<10?'0':'')+h+":00";
+            if(timetable[key]) timetable[key].push(`${ev.name}: ${escapeHtml(ev.desc)} (${ev.start}~${ev.end})`);
+          }
+        }
+      });
+      let res = '<b>시간표 (60분 단위)</b><hr style="margin:2px 0 8px 0">';
+      hourList.forEach(h=>{
+        res += h+" | ";
+        if(timetable[h].length>0) res += timetable[h].join("   ");
+        res += "<br>";
+      });
+      if(sel.length===0) res = '<span style="color:#8991a5;">가족 구성원을 선택해 주세요.</span>';
+      document.getElementById('filterResult').innerHTML = res;
+    };
+
+    // ===== 빈 시간 찾기 =====
+    function showFreeDefault(){
+      document.getElementById('freeDate').value = today.toISOString().slice(0,10);
+      document.getElementById('freeResult').innerHTML='';
+    }
+    document.getElementById('freeConfirmBtn').onclick = function(){
+      const date = document.getElementById('freeDate').value;
+      if(!date) { alert('날짜를 입력해 주세요.'); return;}
+      // family_schedule
+      let famInDay = {};
+      schedules.forEach(ev=>{
+        if(ev.date === date){
+          if(!famInDay[ev.name]) famInDay[ev.name]=[];
+          famInDay[ev.name].push([ev.start,ev.end]);
+        }
+      });
+      // 파이썬 get_free_time_one_day
+      function toMin(s){ return parseInt(s.slice(0,2))*60+parseInt(s.slice(3)); }
+      function fromMin(m){ return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0"); }
+      function getFreeTimeOneDay(famSchedOneDay, dayStart, dayEnd){
+        let busyTimes=[];
+        Object.values(famSchedOneDay).forEach(arr=>{
+          arr.forEach(([s,e])=>{ busyTimes.push([toMin(s),toMin(e)]); });
+        });
+        busyTimes.sort((a,b)=>a[0]-b[0]);
+        let merged=[];
+        busyTimes.forEach(([s,e])=>{
+          if(!merged.length||merged[merged.length-1][1]<s){ merged.push([s,e]);}
+          else{ merged[merged.length-1][1]=Math.max(merged[merged.length-1][1], e);}
+        });
+        const totalStart = toMin("09:00"), totalEnd = toMin("21:00");
+        let free=[];
+        let prevEnd=totalStart;
+        merged.forEach(([s,e])=>{
+          if(prevEnd<s) free.push([prevEnd,s]);
+          prevEnd=Math.max(prevEnd,e);
+        });
+        if(prevEnd<totalEnd) free.push([prevEnd,totalEnd]);
+        return free.map(([s,e])=>[fromMin(s),fromMin(e)]);
+      }
+      let res = `<b>[${date}] 가족 모두 비는 시간</b><br>`;
+      const freeTimeList = getFreeTimeOneDay(famInDay, "09:00", "21:00");
+      if(freeTimeList.length===0) res += "모두 비는 시간이 없습니다.";
+      else {
+        res+='<ul class="mini-list">';
+        freeTimeList.forEach(([s,e])=>{ res += `<li>${s} ~ ${e}</li>`; });
+        res+='</ul>';
+      }
+      document.getElementById('freeResult').innerHTML = res;
+    };
+
+    // ==== 통계 - 카테고리별 보기 ====
+    function showStats(){
+      // 카테고리 버튼
+      let h='';
+      CATEGORY.forEach(c=>{
+        h += `<button type="button" class="catBtn" data-cate="${c}">${c}</button>`;
+      });
+      document.getElementById('catListStats').innerHTML = h;
+      document.getElementById('statsResult').innerHTML='';
+      document.querySelectorAll('.catBtn').forEach(btn=>{
+        btn.onclick = function(){
+          document.querySelectorAll('.catBtn').forEach(b=>b.classList.remove('sel'));
+          btn.classList.add('sel');
+          const c = btn.getAttribute('data-cate');
+          const filtered = schedules.filter(e=>e.category===c);
+          let res = `<b>['${c}'] 종류의 약속</b>`;
+          if(!filtered.length) res += '<br>해당 약속이 없습니다.';
+          else {
+            res+='<ul class="mini-list">';
+            filtered.forEach((e,i)=>{ res += `<li>${i+1}. ${e.date} ${e.emoji||''} [${e.name}] ${escapeHtml(e.desc)}</li>`; });
+            res+='</ul>';
+          }
+          document.getElementById('statsResult').innerHTML = res;
+        }
+      });
+    }
+
+    // ==== XSS 방지 ====
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, function (m) {
+        return ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        })[m];
+      });
+    }
+    // 최초 실행
+    makeCalendar();
+  </script>
+</body>
+</html>
