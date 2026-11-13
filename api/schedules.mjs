@@ -23,7 +23,7 @@ export default async function handler(req,res) {
     } catch { return reply(res,400,{ok:false,code:'BAD_JSON',message:'JSON 요청 본문을 확인하세요.'}); }
     if(!ACTIONS.has(body.action)) return reply(res,400,{ok:false,code:'BAD_ACTION',message:'지원하지 않는 작업입니다.'});
     // 브라우저가 서버의 secret이나 API 목적지를 덮어쓸 수 없습니다.
-    payload={action:body.action,familyCode:body.familyCode,id:body.id,version:body.version,event:body.event,from:body.from,to:body.to};
+    payload={action:body.action,id:body.id,version:body.version,event:body.event,from:body.from,to:body.to};
   }
   try {
     const upstream=await fetch(endpoint,{
@@ -35,11 +35,12 @@ export default async function handler(req,res) {
     let data;
     try { data=JSON.parse(raw); } catch { return reply(res,502,{ok:false,configured:true,connected:false,code:'SCRIPT_NOT_JSON',message:'Apps Script 웹앱 배포의 실행 사용자·접근 권한과 /exec 주소를 확인하세요.'}); }
     if(!data || typeof data.ok!=='boolean') return reply(res,502,{ok:false,code:'BAD_UPSTREAM',message:'Apps Script 응답 형식이 맞지 않습니다.'});
+    if (data.code==='INVALID_FAMILY_CODE' || (data.ok && ((req.method==='GET' && data.mode!=='shared') || (payload.action==='list' && data.mode!=='shared')))) return reply(res,503,{ok:false,configured:true,connected:false,code:'SCRIPT_UPDATE_REQUIRED',message:'Apps Script에 공용 일정표용 Code.gs를 넣고 기존 웹앱 배포를 새 버전으로 업데이트하세요.'});
     if(!upstream.ok || !data.ok) {
       const status=[400,401,404,409,413,500,503].includes(data.status)?data.status:502;
       return reply(res,status,{ok:false,configured:true,connected:false,code:data.code || 'UPSTREAM_ERROR',message:data.message || 'Apps Script 연결에 실패했습니다.'});
     }
-    if(req.method==='GET') return reply(res,200,{ok:true,configured:true,connected:data.connected===true,service:'team4-family-schedules'});
+    if(req.method==='GET') return reply(res,200,{ok:true,configured:true,connected:data.connected===true,mode:'shared',service:'team4-shared-schedules'});
     return reply(res,200,data);
   } catch(err) {
     const timeout=err.name==='TimeoutError' || err.name==='AbortError';
