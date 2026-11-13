@@ -28,6 +28,10 @@
     .btn-main { font-weight:bold; background:var(--main); color:#fff; border-radius:8px; border:none; padding:9px 0; margin:6px 0;}
     .btn-main:active { background:var(--main-dk);}
     .btn-sub { background:#dce9fa; color:#4d5c8a; font-weight:bold; border:none; padding:7px 16px; border-radius:7px;}
+    .sync-bar { margin:12px 10px; display:flex; align-items:center; gap:8px; font-size:.85em; color:#526180; }
+    .sync-bar span { flex:1; }
+    .sync-bar[data-error="true"] { color:#a22828; }
+    button:disabled { opacity:.55; cursor:wait; }
     /* 캘린더 */
     .calendar-head {display:flex; justify-content:space-between; align-items:center; margin-bottom:7px;}
     .calendar-title {font-size:1.24em; font-weight:600;}
@@ -79,6 +83,10 @@
       <div class="themeCircle theme-green" style="background:#55b966" data-t="green" title="그린"></div>
     </div>
     <div class="illu"><img src="https://cdn.pixabay.com/photo/2013/07/13/12/35/family-146770_1280.png" alt="귀여운 가족" draggable="false" /></div>
+    <div class="sync-bar" id="syncBar">
+      <span id="syncStatus" role="status" aria-live="polite">공용 일정을 불러오는 중…</span>
+      <button type="button" class="btn-sub" id="reloadSchedules">새로고침</button>
+    </div>
 
     <!-- 메뉴 -->
     <div class="menuBar" id="menuBar">
@@ -125,7 +133,7 @@
         <input type="time" name="end" id="eventEnd" required value="11:00"/><br>
         <label>일정 내용</label>
         <input type="text" name="desc" id="eventDesc" required maxlength="30"/><br>
-        <button type="submit" class="btn-main" style="width:100%;">일정 추가</button>
+        <button type="submit" id="eventSubmit" class="btn-main" style="width:100%;">일정 추가</button>
       </form>
       <div id="eventCatListResult" class="box" style="display:none;margin-top:12px;"></div>
     </div>
@@ -167,28 +175,111 @@
     const CATEGORY = ["가족","개인","공부","외출","운동","식사","친구","기타"];
     const EMOJI = ["👨‍👩‍👧‍👦","🏠","📝","📚","👟","🍽️","🚗","🍀","🎮","🥗","🧸"];
 
-    // 일정 데이터: [{name, date, start, end, desc, category, emoji}]
-    // - localStorage key: 'famSched'
-    let schedules = []; // 실제 데이터
+    // 공용 일정은 /api/schedules를 통해 Google Sheets에서 읽고 저장합니다.
+    // 예전 famSched 로컬 데이터는 자동 공개하거나 덮어쓰지 않습니다.
+    let schedules = [];
     let theme = 'default';
-    // ---- localStorage load ----
-    function loadData(){
-      try {
-        const saved = localStorage.getItem('famSched');
-        if(saved) schedules = JSON.parse(saved);
-        const t = localStorage.getItem('famTheme'); 
-        if (t && typeof t === 'string') theme = t;
-      } catch(e){ alert('저장소 접근 오류, 데이터가 저장되지 않을 수 있습니다.'); schedules=[];}
+    let activeScreen = 'calendar';
+    let saving = false;
+    let refreshSequence = 0;
+    let pendingCreate = null;
+    try {
+      const t = localStorage.getItem('famTheme');
+      if (['default','yellow','pink','green'].includes(t)) theme = t;
+    } catch {}
+
+    function setSyncStatus(message, error=false){
+      document.getElementById('syncStatus').textContent = message;
+      document.getElementById('syncBar').dataset.error = String(error);
     }
-    function saveData(){
+
+    async function scheduleApi(payload){
+      const controller = new AbortController();
+      const timer = setTimeout(()=>controller.abort(), 35000);
       try {
-        localStorage.setItem('famSched', JSON.stringify(schedules));
-      } catch { alert('저장소 저장 실패, 임시로만 사용됩니다.'); }
+        const response = await fetch('/api/schedules', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(payload),
+          cache:'no-store',
+          signal:controller.signal
+        });
+        let data;
+        try { data = await response.json(); }
+        catch { throw new Error('응답을 읽지 못했습니다. 잠시 후 다시 시도해 주세요.'); }
+        if(!response.ok || !data.ok){
+          const error = new Error(data.message || '일정 요청에 실패했습니다.');
+          error.status = response.status;
+          error.code = data.code;
+          throw error;
+        }
+        return data;
+      } catch(error){
+        if(error.name === 'AbortError') throw new Error('응답이 늦어지고 있습니다. 같은 내용으로 다시 시도해 주세요.');
+        throw error;
+      } finally { clearTimeout(timer); }
+    }
+
+    function renderSharedSchedules(){
+      makeCalendar();
+      if(activeScreen==='filter'){
+        const selected = new Set([...document.querySelectorAll('.filterBox:checked')].map(e=>e.value));
+        updateFilterNameList();
+        document.querySelectorAll('.filterBox').forEach(e=>e.checked=selected.has(e.value));
+        if(selected.size) document.getElementById('filterConfirmBtn').onclick();
+      }
+      if(activeScreen==='stats'){
+        const selected = document.querySelector('#catListStats .catBtn.sel')?.dataset.cate;
+        showStats();
+        if(selected) [...document.querySelectorAll('#catListStats .catBtn')].find(b=>b.dataset.cate===selected)?.click();
+      }
+      if(activeScreen==='free' && document.getElementById('freeDate').value && document.getElementById('freeResult').textContent){
+        document.getElementById('freeConfirmBtn').onclick();
+      }
+    }
+
+    async function refreshSchedules(){
+      const sequence = ++refreshSequence;
+      const button = document.getElementById('reloadSchedules');
+      button.disabled = true;
+      setSyncStatus('공용 일정을 불러오는 중…');
+      try {
+        const data = await scheduleApi({action:'list'});
+        if(sequence !== refreshSequence) return false;
+        if(data.mode!=='shared' || !Array.isArray(data.events)) throw new Error('공용 일정 응답을 확인할 수 없습니다.');
+        schedules = data.events;
+        const recovered = pendingCreate && schedules.find(item=>item.id===pendingCreate.id);
+        if(recovered){
+          pendingCreate = null;
+          const selected = parseDateStr(recovered.date);
+          calY=selected.year; calM=selected.month; selDay=selected.day;
+          showScreen('calendar');
+          alert('앞서 요청한 일정이 저장된 것을 확인했습니다.');
+        }
+        renderSharedSchedules();
+        setSyncStatus('공용 일정 '+schedules.length+'개 · 새로고침으로 최신 일정 확인');
+        return true;
+      } catch(error){
+        if(sequence === refreshSequence) setSyncStatus('일정을 불러오지 못했습니다. '+error.message, true);
+        return false;
+      } finally {
+        if(sequence === refreshSequence) button.disabled = saving;
+      }
+    }
+
+    document.getElementById('reloadSchedules').onclick = ()=>{
+      if(!saving) return refreshSchedules();
+    };
+
+    function setSaving(value){
+      saving = value;
+      [...document.getElementById('eventForm').elements].forEach(el=>el.disabled=value);
+      document.getElementById('eventSubmit').textContent = value ? '저장 중…' : '일정 추가';
+      document.getElementById('reloadSchedules').disabled = value;
     }
     function saveTheme(){
       try{ localStorage.setItem('famTheme', theme);}catch{}
     }
-    loadData();
 
     // ===== 테마 =====
     function setTheme(t){
@@ -208,6 +299,7 @@
 
     // ===== 화면 전환 =====
     function showScreen(sid){
+      activeScreen = sid;
       document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
       document.getElementById(sid+'Screen').classList.add('active');
       document.querySelectorAll('.menuBtn').forEach(b=>b.classList.remove('active'));
@@ -285,7 +377,7 @@
       let h = `<b> ${calY}년 ${calM}월 ${selDay}일 일정 </b><ul class="mini-list">`;
       if(evts.length===0) h += "<li>일정이 없습니다.</li>";
       evts.forEach(e=>{
-        h+=`<li><span class="event-emoji">${e.emoji?e.emoji:''}</span> <b>[${e.name}]</b> <span class="badge">${e.category}</span> ${e.start}~${e.end} ${escapeHtml(e.desc)||''}</li>`;
+        h+=`<li><span class="event-emoji">${escapeHtml(e.emoji||'')}</span> <b>[${escapeHtml(e.name)}]</b> <span class="badge">${escapeHtml(e.category)}</span> ${escapeHtml(e.start)}~${escapeHtml(e.end)} ${escapeHtml(e.desc)||''}</li>`;
       });
       h+='</ul>';
       document.getElementById('calendarEventList').innerHTML=h;
@@ -305,12 +397,13 @@
       // 카테고리 버튼
       let h='';
       CATEGORY.forEach(c=>{
-        h+=`<button type="button" class="catBtn" data-cat="${c}">${c}</button>`;
+        h+=`<button type="button" class="catBtn" data-cat="${escapeHtml(c)}">${escapeHtml(c)}</button>`;
       });
       document.getElementById('catSelectList').innerHTML = h;
-      document.querySelectorAll('.catBtn').forEach(btn=>{
+      document.querySelectorAll('#catSelectList .catBtn').forEach(btn=>{
         btn.onclick = function(){
-          document.querySelectorAll('.catBtn').forEach(b=>b.classList.remove('sel'));
+          if(saving) return;
+          document.querySelectorAll('#catSelectList .catBtn').forEach(b=>b.classList.remove('sel'));
           btn.classList.add('sel');
           document.getElementById('eventCategory').value = btn.getAttribute('data-cat');
         }
@@ -318,11 +411,12 @@
       // 이모지
       let eh = '';
       EMOJI.forEach(em=>{
-        eh += `<span class="emoji-choice" data-emo="${em}">${em}</span>`;
+        eh += `<span class="emoji-choice" data-emo="${escapeHtml(em)}">${escapeHtml(em)}</span>`;
       });
       document.getElementById('emojiPicker').innerHTML = eh;
       document.querySelectorAll('.emoji-choice').forEach(sp=>{
         sp.onclick = ()=> {
+          if(saving) return;
           document.getElementById('eventEmoji').value = sp.getAttribute('data-emo');
           document.querySelectorAll('.emoji-choice').forEach(e=>e.style.outline='none');
           sp.style.outline='2px solid #4970e1';
@@ -330,7 +424,9 @@
       });
       // reset form
       document.getElementById('eventForm').reset();
-      document.querySelectorAll('.catBtn').forEach(b=>b.classList.remove('sel'));
+      document.getElementById('eventCategory').value = '';
+      document.getElementById('eventEmoji').value = '';
+      document.querySelectorAll('#catSelectList .catBtn').forEach(b=>b.classList.remove('sel'));
       document.querySelectorAll('.emoji-choice').forEach(e=>e.style.outline='none');
     }
     // 일정 추가(파이썬과 동일 규칙)
@@ -338,32 +434,57 @@
       const [h,m]=t.split(':').map(Number); return h+(m||0)/60;
     }
     function timeOrderValid(s,e){ return timeToNum(s)<timeToNum(e); }
-    document.getElementById('eventForm').onsubmit = function(e){
+    document.getElementById('eventForm').onsubmit = async function(e){
       e.preventDefault();
+      if(saving) return;
       const cat = document.getElementById('eventCategory').value;
       const emoj = document.getElementById('eventEmoji').value;
       const name = document.getElementById('eventName').value;
       const date = document.getElementById('eventDate').value;
       const start = document.getElementById('eventStart').value;
       const end = document.getElementById('eventEnd').value;
-      const desc = document.getElementById('eventDesc').value;
+      const desc = document.getElementById('eventDesc').value.trim();
       if(!cat){ alert('카테고리를 선택하세요'); return; }
       if(!name||!date||!start||!end||!desc) { alert('모든 항목을 입력하세요'); return;}
       if(!timeOrderValid(start,end)){ alert('시작시간 < 끝시간이 되도록 입력');return;}
-      // 저장
-      schedules.push({category:cat, emoji:emoj, name, date, start, end, desc});
-      saveData();
-      alert('일정이 추가되었습니다!');
-      showScreen('calendar');
-      makeCalendar();
+      const draft = {category:cat, emoji:emoj, name, date, start, end, desc};
+      const signature = JSON.stringify(draft);
+      if(pendingCreate && pendingCreate.signature !== signature){
+        alert('앞선 저장 결과가 아직 확인되지 않았습니다. 기존 입력 내용으로 다시 저장하거나 공용 일정을 새로고침해 확인해 주세요.');
+        return;
+      }
+      if(!pendingCreate) pendingCreate = {id:crypto.randomUUID(),signature};
+      const id = pendingCreate.id;
+      ++refreshSequence; // 저장 전에 시작한 조회가 최신 화면을 덮어쓰지 않도록 합니다.
+      setSaving(true);
+      setSyncStatus('일정을 저장하는 중…');
+      try {
+        const data = await scheduleApi({action:'create',id,event:draft});
+        if(!data.event || data.event.id!==id) throw new Error('저장 결과를 확인하지 못했습니다. 같은 내용으로 다시 시도해 주세요.');
+        schedules = schedules.filter(item=>item.id!==id).concat(data.event);
+        pendingCreate = null;
+        const selected = parseDateStr(date);
+        calY=selected.year; calM=selected.month; selDay=selected.day;
+        setSyncStatus('일정이 저장되었습니다.');
+        showScreen('calendar');
+        alert('공용 일정표에 저장되었습니다!');
+        const refreshed = await refreshSchedules();
+        if(!refreshed) setSyncStatus('일정은 저장됐지만 최신 목록을 불러오지 못했습니다. 새로고침해 주세요.', true);
+      } catch(error){
+        // 잘못된 입력으로 명확히 거절된 경우에만 새로운 입력을 허용합니다.
+        // 통신 오류는 같은 ID를 유지해 다시 눌러도 중복 저장되지 않습니다.
+        if(error.status===400 || error.status===413) pendingCreate=null;
+        setSyncStatus('저장을 확인하지 못했습니다. '+error.message, true);
+        alert('저장을 확인하지 못했습니다.\n'+error.message);
+      } finally { setSaving(false); }
     };
 
     // ===== 필터 기능 =====
     function updateFilterNameList(){
       // 체크박스
       let h='';
-      FAMILY.forEach(n=>{
-        h+=`<label class="catCheckbox"><input type="checkbox" value="${n}" class="filterBox">${n}</label>`;
+      unique([...FAMILY,...schedules.map(e=>e.name)]).forEach(n=>{
+        h+=`<label class="catCheckbox"><input type="checkbox" value="${escapeHtml(n)}" class="filterBox">${escapeHtml(n)}</label>`;
       });
       document.getElementById('filterNameList').innerHTML = h;
       document.getElementById('filterResult').innerHTML = '';
@@ -385,7 +506,7 @@
           const eh = Number(ev.end.split(":")[0]);
           for(let h=sh;h<eh;h++){
             const key = (h<10?'0':'')+h+":00";
-            if(timetable[key]) timetable[key].push(`${ev.name}: ${escapeHtml(ev.desc)} (${ev.start}~${ev.end})`);
+            if(timetable[key]) timetable[key].push(`${escapeHtml(ev.name)}: ${escapeHtml(ev.desc)} (${escapeHtml(ev.start)}~${escapeHtml(ev.end)})`);
           }
         }
       });
@@ -454,22 +575,22 @@
     function showStats(){
       // 카테고리 버튼
       let h='';
-      CATEGORY.forEach(c=>{
-        h += `<button type="button" class="catBtn" data-cate="${c}">${c}</button>`;
+      unique([...CATEGORY,...schedules.map(e=>e.category)]).forEach(c=>{
+        h += `<button type="button" class="catBtn" data-cate="${escapeHtml(c)}">${escapeHtml(c)}</button>`;
       });
       document.getElementById('catListStats').innerHTML = h;
       document.getElementById('statsResult').innerHTML='';
-      document.querySelectorAll('.catBtn').forEach(btn=>{
+      document.querySelectorAll('#catListStats .catBtn').forEach(btn=>{
         btn.onclick = function(){
-          document.querySelectorAll('.catBtn').forEach(b=>b.classList.remove('sel'));
+          document.querySelectorAll('#catListStats .catBtn').forEach(b=>b.classList.remove('sel'));
           btn.classList.add('sel');
           const c = btn.getAttribute('data-cate');
           const filtered = schedules.filter(e=>e.category===c);
-          let res = `<b>['${c}'] 종류의 약속</b>`;
+          let res = `<b>['${escapeHtml(c)}'] 종류의 약속</b>`;
           if(!filtered.length) res += '<br>해당 약속이 없습니다.';
           else {
             res+='<ul class="mini-list">';
-            filtered.forEach((e,i)=>{ res += `<li>${i+1}. ${e.date} ${e.emoji||''} [${e.name}] ${escapeHtml(e.desc)}</li>`; });
+            filtered.forEach((e,i)=>{ res += `<li>${i+1}. ${escapeHtml(e.date)} ${escapeHtml(e.emoji||'')} [${escapeHtml(e.name)}] ${escapeHtml(e.desc)}</li>`; });
             res+='</ul>';
           }
           document.getElementById('statsResult').innerHTML = res;
@@ -487,6 +608,8 @@
     }
     // 최초 실행
     makeCalendar();
+    refreshSchedules();
   </script>
 </body>
 </html>
+
